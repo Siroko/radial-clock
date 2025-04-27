@@ -27,15 +27,15 @@ const PARAMS = {
     fontSize: 0.1,
     // Noise Seconds
     noiseFreqSec: 0.1,
-    noiseAmpSec: 0.05,
+    noiseAmpSec: 0.12,
     // Noise Minutes
     noiseFreqMin: 0.08,
-    noiseAmpMin: 0.08,
+    noiseAmpMin: 0.18,
     // Noise Hours
     noiseFreqHrs: 0.05,
-    noiseAmpHrs: 0.1,
+    noiseAmpHrs: 0.22,
     // Neighbor Push
-    pushFactor: 0.03,
+    pushFactor: 0.05,
     pushDecay: 0.9,
     // Scale Spring
     scaleStiffness: 150,
