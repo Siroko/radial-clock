@@ -61,6 +61,7 @@ const hourTexts: Text[] = [];
 
 // Helper function to create text
 function createClockText(value: number, radius: number, baseColor: number | string) {
+    console.log(radius);
     const textMesh = new Text();
     textMesh.text = String(value);
     textMesh.fontSize = PARAMS.fontSize; // Use param
