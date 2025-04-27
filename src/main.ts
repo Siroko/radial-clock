@@ -153,7 +153,12 @@ const sizes = {
 // Camera
 const camera = new THREE.PerspectiveCamera(75, sizes.width / sizes.height, 0.1, 100)
 camera.position.z = 3
-scene.add(camera)
+// scene.add(camera) // Add camera to rig instead
+
+// Camera Rig
+const cameraRig = new THREE.Group();
+cameraRig.add(camera);
+scene.add(cameraRig);
 
 // Renderer
 const canvas = document.querySelector('#app') as HTMLCanvasElement
@@ -163,9 +168,17 @@ const renderer = new THREE.WebGLRenderer({
 renderer.setSize(sizes.width, sizes.height)
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
 
-// Orbit Controls
+// Orbit Controls (still controls the camera object)
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true; // Optional: Adds smoothing to the movement
+
+// --- Mouse Position Tracking ---
+const mouse = new THREE.Vector2();
+window.addEventListener('mousemove', (event) => {
+    // Normalize mouse position to -1 -> +1 range
+    mouse.x = (event.clientX / sizes.width) * 2 - 1;
+    mouse.y = -(event.clientY / sizes.height) * 2 + 1; // Y is inverted
+});
 
 // Resize listener AFTER renderer initialization
 window.addEventListener('resize', () => {
@@ -184,6 +197,7 @@ window.addEventListener('resize', () => {
 
 // --- Tweakpane Setup ---
 const pane: any = new Pane();
+pane.hidden = true; // Start hidden
 
 const generalFolder = pane.addFolder({ title: 'General' });
 generalFolder.addBinding(PARAMS, 'fontSize', { min: 0.01, max: 0.5 })
@@ -239,6 +253,13 @@ animFolder.addBinding(PARAMS, 'scaleDamping', { min: 0, max: 1 });
 animFolder.addBinding(PARAMS, 'offsetLerp', { min: 0.01, max: 0.5 });
 animFolder.addBinding(PARAMS, 'angleLerp', { min: 0.01, max: 0.5 });
 
+// Add keydown listener to toggle pane visibility
+window.addEventListener('keydown', (event) => {
+    if (event.key === 'm' || event.key === 'M') {
+        pane.hidden = !pane.hidden;
+    }
+});
+
 // Animation State for Lerping Minutes/Hours
 let currentMinutesAngle = 0;
 let currentHoursAngle = 0;
@@ -260,12 +281,26 @@ function lerpAngle(current: number, target: number, factor: number): number {
     return current;
 }
 
+// --- Parallax Configuration ---
+const parallaxAmount = 0.3; // Max rotation in radians
+const parallaxSpeed = 5.0;  // Speed for lerping camera rotation (higher = faster)
+
 const tick = () => {
     const deltaTime = clock.getDelta(); // Time since last frame
     const elapsedTime = clock.getElapsedTime();
 
     // Update controls
-    controls.update(); // Required if enableDamping is true
+    controls.update(); // OrbitControls update first
+
+    // --- Apply Mouse Parallax to Camera Rig (Frame-rate independent) ---
+    // Calculate target rotation based on mouse position
+    const targetRotationX = mouse.y * parallaxAmount;
+    const targetRotationY = mouse.x * parallaxAmount;
+
+    // Lerp camera rig rotation towards target using deltaTime
+    const lerpFactor = 1 - Math.exp(-parallaxSpeed * deltaTime);
+    cameraRig.rotation.x = THREE.MathUtils.lerp(cameraRig.rotation.x, targetRotationX, lerpFactor); // Apply to rig
+    cameraRig.rotation.y = THREE.MathUtils.lerp(cameraRig.rotation.y, targetRotationY, lerpFactor); // Apply to rig
 
     const now = new Date();
     const currentMillisecond = now.getMilliseconds();
@@ -289,8 +324,6 @@ const tick = () => {
     const secondsAngle = (secondsFraction / 60) * Math.PI * 2;
     secondsGroup.rotation.z = secondsAngle;
     secondTexts.forEach((text, index) => {
-        text.rotation.z = -secondsAngle; // Counter-rotate
-
         // Calculate the TARGET angle offset based on current highlight
         const highlightedIndex = currentSecond;
         const totalUnits = 60;
@@ -342,6 +375,12 @@ const tick = () => {
         text.userData.currentScale = currentScale;
         text.userData.scaleVelocity = scaleVelocity;
         text.scale.set(currentScale, currentScale, 1);
+
+        // Remove Billboard effect
+        // text.quaternion.copy(camera.quaternion);
+
+        // Restore Counter-rotation
+        text.rotation.z = -secondsAngle;
     });
 
     // --- Minutes & Hours (Lerped Rotation + Noise Radius + Spring Scale + Smooth Propagating Push Offset) ---
@@ -360,8 +399,6 @@ const tick = () => {
 
     // Process Minutes
     minuteTexts.forEach((text, index) => {
-        text.rotation.z = -currentMinutesAngle; // Counter-rotate
-
         // Calculate TARGET offset
         const highlightedIndex = currentMinute;
         const totalUnits = 60;
@@ -413,12 +450,16 @@ const tick = () => {
         text.userData.currentScale = currentScale;
         text.userData.scaleVelocity = scaleVelocity;
         text.scale.set(currentScale, currentScale, 1);
+
+        // Remove Billboard effect
+        // text.quaternion.copy(camera.quaternion);
+
+        // Restore Counter-rotation
+        text.rotation.z = -currentMinutesAngle;
     });
 
     // Process Hours
     hourTexts.forEach((text, index) => {
-        text.rotation.z = -currentHoursAngle; // Counter-rotate
-
         // Calculate TARGET offset
         const highlightedIndex = currentHour; // Use currentHour directly
         const totalUnits = 24; // Use 24 units
@@ -471,6 +512,12 @@ const tick = () => {
         text.userData.currentScale = currentScale;
         text.userData.scaleVelocity = scaleVelocity;
         text.scale.set(currentScale, currentScale, 1);
+
+        // Remove Billboard effect
+        // text.quaternion.copy(camera.quaternion);
+
+        // Restore Counter-rotation
+        text.rotation.z = -currentHoursAngle;
     });
 
     // --- Update Spline Vertices ---
@@ -542,7 +589,7 @@ const tick = () => {
     }
 
     // Render
-    renderer.render(scene, camera);
+    renderer.render(scene, camera); // Still render using the camera
 
     // Call tick again on the next frame
     window.requestAnimationFrame(tick);
