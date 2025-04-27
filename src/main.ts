@@ -13,6 +13,7 @@ const PARAMS = {
     radiusSeconds: 1.8,
     radiusMinutes: 1.4,
     radiusHours: 1.0,
+    splineRadiusFactor: 0.9,
     // Z Coords (Might not need tweaking, but can add)
     zCoordSeconds: 0,
     zCoordMinutes: -0.1,
@@ -57,14 +58,40 @@ scene.add(secondsGroup, minutesGroup, hoursGroup);
 // Re-introduce Arrays to hold text meshes for individual rotation correction
 const secondTexts: Text[] = [];
 const minuteTexts: Text[] = [];
-const hourTexts: Text[] = [];
+const hourTexts: Text[] = []; // Will hold 0-23
+
+// --- Spline Objects ---
+const splineMaxPointsSeconds = 60 + 1; // 60 points + 1 to close the loop
+const splineMaxPointsMinutes = 60 + 1;
+const splineMaxPointsHours = 24 + 1; // Changed to 24 hours + 1
+
+// Materials
+const splineMatSeconds = new THREE.LineBasicMaterial({ color: PARAMS.baseColorSeconds });
+const splineMatMinutes = new THREE.LineBasicMaterial({ color: PARAMS.baseColorMinutes });
+const splineMatHours = new THREE.LineBasicMaterial({ color: PARAMS.baseColorHours });
+
+// Geometries
+const splineGeomSeconds = new THREE.BufferGeometry();
+splineGeomSeconds.setAttribute('position', new THREE.BufferAttribute(new Float32Array(splineMaxPointsSeconds * 3), 3));
+const splineGeomMinutes = new THREE.BufferGeometry();
+splineGeomMinutes.setAttribute('position', new THREE.BufferAttribute(new Float32Array(splineMaxPointsMinutes * 3), 3));
+const splineGeomHours = new THREE.BufferGeometry();
+splineGeomHours.setAttribute('position', new THREE.BufferAttribute(new Float32Array(splineMaxPointsHours * 3), 3)); // Updated size
+
+// Lines
+const splineSeconds = new THREE.Line(splineGeomSeconds, splineMatSeconds);
+const splineMinutes = new THREE.Line(splineGeomMinutes, splineMatMinutes);
+const splineHours = new THREE.Line(splineGeomHours, splineMatHours);
+
+// Add lines to the scene
+scene.add(splineSeconds, splineMinutes, splineHours);
 
 // Helper function to create text
-function createClockText(value: number, radius: number, baseColor: number | string) {
-    console.log(radius);
+function createClockText(value: number, radius: number, baseColor: number | string, digits: number = 1) { // Add digits parameter
     const textMesh = new Text();
-    textMesh.text = String(value);
-    textMesh.fontSize = PARAMS.fontSize; // Use param
+    // Format number with leading zeros if needed
+    textMesh.text = String(value).padStart(digits, '0');
+    textMesh.fontSize = PARAMS.fontSize;
     textMesh.color = baseColor;
     textMesh.anchorX = 'center';
     textMesh.anchorY = 'middle';
@@ -108,11 +135,11 @@ for (let i = 0; i < 60; i++) {
     minuteTexts.push(minuteText);
 }
 
-// Create Hours Text (1-12)
-for (let i = 1; i <= 12; i++) {
-    const hourText = createClockText(i, PARAMS.radiusHours, PARAMS.baseColorHours);
-    const valueForAngle = i === 12 ? 0 : i;
-    positionText(hourText, valueForAngle, 12, PARAMS.radiusHours);
+// Create Hours Text (00-23)
+for (let i = 0; i < 24; i++) { // Loop 0-23
+    const hourText = createClockText(i, PARAMS.radiusHours, PARAMS.baseColorHours, 2); // Pass digits=2
+    // Angle calculation uses value i (0-23) and totalUnits 24
+    positionText(hourText, i, 24, PARAMS.radiusHours);
     hoursGroup.add(hourText);
     hourTexts.push(hourText);
 }
@@ -167,6 +194,7 @@ const radiiFolder = pane.addFolder({ title: 'Radii & Z' });
 radiiFolder.addBinding(PARAMS, 'radiusSeconds', { min: 0.5, max: 3 });
 radiiFolder.addBinding(PARAMS, 'radiusMinutes', { min: 0.5, max: 3 });
 radiiFolder.addBinding(PARAMS, 'radiusHours', { min: 0.5, max: 3 });
+radiiFolder.addBinding(PARAMS, 'splineRadiusFactor', { min: 0.5, max: 1, label: 'Spline Radius %' });
 radiiFolder.addBinding(PARAMS, 'zCoordSeconds', { min: -10, max: 10 })
     .on('change', () => {
         secondsGroup.position.z = PARAMS.zCoordSeconds;
@@ -236,7 +264,6 @@ const tick = () => {
     const currentSecond = now.getSeconds();
     const currentMinute = now.getMinutes();
     const currentHour = now.getHours(); // 0-23
-    const hourIndex = (currentHour % 12 === 0) ? 11 : (currentHour % 12) - 1; // Index for hour 1..12 -> 0..11
 
     // --- Update Target Scales ---
     secondTexts.forEach((text, index) => {
@@ -246,7 +273,7 @@ const tick = () => {
         text.userData.targetScale = (index === currentMinute) ? 3 : 1;
     });
     hourTexts.forEach((text, index) => {
-        text.userData.targetScale = (index === hourIndex) ? 3 : 1;
+        text.userData.targetScale = (index === currentHour) ? 3 : 1;
     });
 
     // --- Seconds (Smooth Rotation + Noise Radius + Spring Scale + Smooth Propagating Push Offset) ---
@@ -313,7 +340,7 @@ const tick = () => {
 
     // Calculate discrete target angles
     targetMinutesAngle = (currentMinute / 60) * Math.PI * 2;
-    targetHoursAngle = ((currentHour % 12) / 12) * Math.PI * 2; // Use integer hour
+    targetHoursAngle = (currentHour / 24) * Math.PI * 2; // Use 24 divisions
 
     // Lerp current angles towards target angles
     currentMinutesAngle = lerpAngle(currentMinutesAngle, targetMinutesAngle, PARAMS.angleLerp);
@@ -385,9 +412,10 @@ const tick = () => {
         text.rotation.z = -currentHoursAngle; // Counter-rotate
 
         // Calculate TARGET offset
-        const highlightedIndex = hourIndex;
-        const totalUnits = 12;
+        const highlightedIndex = currentHour; // Use currentHour directly
+        const totalUnits = 24; // Use 24 units
         let targetAngleOffset = 0;
+        // Ensure highlightedScale lookup uses the correct index if hourTexts holds 0-23
         const highlightedScale = hourTexts[highlightedIndex].userData.currentScale as number;
         if (index !== highlightedIndex) {
             let diff = index - highlightedIndex;
@@ -420,7 +448,7 @@ const tick = () => {
         text.position.y = dynamicRadius * Math.sin(finalAngle);
 
         // Set color based on highlight
-        text.color = (index === hourIndex) ? PARAMS.highlightColor : PARAMS.baseColorHours;
+        text.color = (index === currentHour) ? PARAMS.highlightColor : PARAMS.baseColorHours; // Use currentHour
 
         // Spring scale calculation
         const targetScale = text.userData.targetScale as number;
@@ -436,6 +464,60 @@ const tick = () => {
         text.userData.scaleVelocity = scaleVelocity;
         text.scale.set(currentScale, currentScale, 1);
     });
+
+    // --- Update Spline Vertices ---
+    const tempVector = new THREE.Vector3(); // To store world positions
+    const groupCenter = new THREE.Vector3(); // To store group center
+    const direction = new THREE.Vector3(); // To store direction from group center
+    const splinePoint = new THREE.Vector3(); // To store final spline point
+
+    // Update Seconds Spline
+    secondsGroup.getWorldPosition(groupCenter);
+    const secPositions = splineGeomSeconds.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < 60; i++) {
+        secondTexts[i].getWorldPosition(tempVector);
+        direction.subVectors(tempVector, groupCenter);
+        splinePoint.copy(groupCenter).addScaledVector(direction, PARAMS.splineRadiusFactor);
+        secPositions.setXYZ(i, splinePoint.x, splinePoint.y, splinePoint.z);
+    }
+    // Close the loop
+    secondTexts[0].getWorldPosition(tempVector);
+    direction.subVectors(tempVector, groupCenter);
+    splinePoint.copy(groupCenter).addScaledVector(direction, PARAMS.splineRadiusFactor);
+    secPositions.setXYZ(60, splinePoint.x, splinePoint.y, splinePoint.z);
+    secPositions.needsUpdate = true;
+
+    // Update Minutes Spline
+    minutesGroup.getWorldPosition(groupCenter);
+    const minPositions = splineGeomMinutes.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < 60; i++) {
+        minuteTexts[i].getWorldPosition(tempVector);
+        direction.subVectors(tempVector, groupCenter);
+        splinePoint.copy(groupCenter).addScaledVector(direction, PARAMS.splineRadiusFactor);
+        minPositions.setXYZ(i, splinePoint.x, splinePoint.y, splinePoint.z);
+    }
+    // Close the loop
+    minuteTexts[0].getWorldPosition(tempVector);
+    direction.subVectors(tempVector, groupCenter);
+    splinePoint.copy(groupCenter).addScaledVector(direction, PARAMS.splineRadiusFactor);
+    minPositions.setXYZ(60, splinePoint.x, splinePoint.y, splinePoint.z);
+    minPositions.needsUpdate = true;
+
+    // Update Hours Spline
+    hoursGroup.getWorldPosition(groupCenter);
+    const hrsPositions = splineGeomHours.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < 24; i++) { // Loop to 24
+        hourTexts[i].getWorldPosition(tempVector);
+        direction.subVectors(tempVector, groupCenter);
+        splinePoint.copy(groupCenter).addScaledVector(direction, PARAMS.splineRadiusFactor);
+        hrsPositions.setXYZ(i, splinePoint.x, splinePoint.y, splinePoint.z);
+    }
+    // Close the loop
+    hourTexts[0].getWorldPosition(tempVector);
+    direction.subVectors(tempVector, groupCenter);
+    splinePoint.copy(groupCenter).addScaledVector(direction, PARAMS.splineRadiusFactor);
+    hrsPositions.setXYZ(24, splinePoint.x, splinePoint.y, splinePoint.z); // Close at index 24
+    hrsPositions.needsUpdate = true;
 
     // Render
     renderer.render(scene, camera);
