@@ -87,7 +87,8 @@ scene.add(splineSeconds, splineMinutes, splineHours);
 
 // Helper function to create text
 function createClockText(value: number, radius: number, baseColor: number | string, digits: number = 2) { // Default digits to 2
-    const textMesh = new Text();
+  console.log(radius);
+  const textMesh = new Text();
     // Format number with leading zeros to ensure 2 digits
     textMesh.text = String(value).padStart(digits, '0');
     textMesh.fontSize = PARAMS.fontSize;
@@ -182,7 +183,7 @@ window.addEventListener('resize', () => {
 })
 
 // --- Tweakpane Setup ---
-const pane = new Pane();
+const pane: any = new Pane();
 
 const generalFolder = pane.addFolder({ title: 'General' });
 generalFolder.addBinding(PARAMS, 'fontSize', { min: 0.01, max: 0.5 })
