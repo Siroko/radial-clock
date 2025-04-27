@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { Text } from 'troika-three-text'
 import { createNoise3D } from 'simplex-noise';
 import { Pane } from 'tweakpane';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 // Scene
 const scene = new THREE.Scene()
@@ -16,8 +17,8 @@ const PARAMS = {
     splineRadiusFactor: 0.9,
     // Z Coords (Might not need tweaking, but can add)
     zCoordSeconds: 0,
-    zCoordMinutes: -0.1,
-    zCoordHours: -0.2,
+    zCoordMinutes: -0.8,
+    zCoordHours: -1.6,
     // Colors (Using hex numbers)
     baseColorSeconds: 0xffffff,
     baseColorMinutes: 0xaaaaff,
@@ -38,9 +39,9 @@ const PARAMS = {
     pushDecay: 0.9,
     // Scale Spring
     scaleStiffness: 150,
-    scaleDamping: 0.9,
+    scaleDamping: 0.26,
     // Lerp Factors
-    offsetLerp: 0.1,
+    offsetLerp: 0.01,
     angleLerp: 0.1
 };
 
@@ -61,22 +62,20 @@ const minuteTexts: Text[] = [];
 const hourTexts: Text[] = []; // Will hold 0-23
 
 // --- Spline Objects ---
-const splineMaxPointsSeconds = 60 + 1; // 60 points + 1 to close the loop
-const splineMaxPointsMinutes = 60 + 1;
-const splineMaxPointsHours = 24 + 1; // Changed to 24 hours + 1
+const curveSegments = 128; // Number of segments for the smooth curve
 
 // Materials
 const splineMatSeconds = new THREE.LineBasicMaterial({ color: PARAMS.baseColorSeconds });
 const splineMatMinutes = new THREE.LineBasicMaterial({ color: PARAMS.baseColorMinutes });
 const splineMatHours = new THREE.LineBasicMaterial({ color: PARAMS.baseColorHours });
 
-// Geometries
+// Geometries (Update size for curve segments)
 const splineGeomSeconds = new THREE.BufferGeometry();
-splineGeomSeconds.setAttribute('position', new THREE.BufferAttribute(new Float32Array(splineMaxPointsSeconds * 3), 3));
+splineGeomSeconds.setAttribute('position', new THREE.BufferAttribute(new Float32Array((curveSegments + 1) * 3), 3));
 const splineGeomMinutes = new THREE.BufferGeometry();
-splineGeomMinutes.setAttribute('position', new THREE.BufferAttribute(new Float32Array(splineMaxPointsMinutes * 3), 3));
+splineGeomMinutes.setAttribute('position', new THREE.BufferAttribute(new Float32Array((curveSegments + 1) * 3), 3));
 const splineGeomHours = new THREE.BufferGeometry();
-splineGeomHours.setAttribute('position', new THREE.BufferAttribute(new Float32Array(splineMaxPointsHours * 3), 3)); // Updated size
+splineGeomHours.setAttribute('position', new THREE.BufferAttribute(new Float32Array((curveSegments + 1) * 3), 3));
 
 // Lines
 const splineSeconds = new THREE.Line(splineGeomSeconds, splineMatSeconds);
@@ -87,9 +86,9 @@ const splineHours = new THREE.Line(splineGeomHours, splineMatHours);
 scene.add(splineSeconds, splineMinutes, splineHours);
 
 // Helper function to create text
-function createClockText(value: number, radius: number, baseColor: number | string, digits: number = 1) { // Add digits parameter
+function createClockText(value: number, radius: number, baseColor: number | string, digits: number = 2) { // Default digits to 2
     const textMesh = new Text();
-    // Format number with leading zeros if needed
+    // Format number with leading zeros to ensure 2 digits
     textMesh.text = String(value).padStart(digits, '0');
     textMesh.fontSize = PARAMS.fontSize;
     textMesh.color = baseColor;
@@ -121,7 +120,7 @@ hoursGroup.position.z = PARAMS.zCoordHours;
 
 // Create Seconds Text (0-59)
 for (let i = 0; i < 60; i++) {
-    const secondText = createClockText(i, PARAMS.radiusSeconds, PARAMS.baseColorSeconds);
+    const secondText = createClockText(i, PARAMS.radiusSeconds, PARAMS.baseColorSeconds, 2); // Explicitly pass digits=2
     positionText(secondText, i, 60, PARAMS.radiusSeconds);
     secondsGroup.add(secondText);
     secondTexts.push(secondText);
@@ -129,7 +128,7 @@ for (let i = 0; i < 60; i++) {
 
 // Create Minutes Text (0-59)
 for (let i = 0; i < 60; i++) {
-    const minuteText = createClockText(i, PARAMS.radiusMinutes, PARAMS.baseColorMinutes);
+    const minuteText = createClockText(i, PARAMS.radiusMinutes, PARAMS.baseColorMinutes, 2); // Explicitly pass digits=2
     positionText(minuteText, i, 60, PARAMS.radiusMinutes);
     minutesGroup.add(minuteText);
     minuteTexts.push(minuteText);
@@ -162,6 +161,10 @@ const renderer = new THREE.WebGLRenderer({
 })
 renderer.setSize(sizes.width, sizes.height)
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+
+// Orbit Controls
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; // Optional: Adds smoothing to the movement
 
 // Resize listener AFTER renderer initialization
 window.addEventListener('resize', () => {
@@ -259,6 +262,10 @@ function lerpAngle(current: number, target: number, factor: number): number {
 const tick = () => {
     const deltaTime = clock.getDelta(); // Time since last frame
     const elapsedTime = clock.getElapsedTime();
+
+    // Update controls
+    controls.update(); // Required if enableDamping is true
+
     const now = new Date();
     const currentMillisecond = now.getMilliseconds();
     const currentSecond = now.getSeconds();
@@ -466,58 +473,72 @@ const tick = () => {
     });
 
     // --- Update Spline Vertices ---
-    const tempVector = new THREE.Vector3(); // To store world positions
-    const groupCenter = new THREE.Vector3(); // To store group center
-    const direction = new THREE.Vector3(); // To store direction from group center
-    const splinePoint = new THREE.Vector3(); // To store final spline point
+    const tempVector = new THREE.Vector3();
+    const groupCenter = new THREE.Vector3();
+    const direction = new THREE.Vector3();
+    const splinePoint = new THREE.Vector3();
 
-    // Update Seconds Spline
+    // Arrays to hold the calculated points for curve generation
+    const secSplinePoints: THREE.Vector3[] = [];
+    const minSplinePoints: THREE.Vector3[] = [];
+    const hrsSplinePoints: THREE.Vector3[] = [];
+
+    // Update Seconds - Collect Points
     secondsGroup.getWorldPosition(groupCenter);
-    const secPositions = splineGeomSeconds.attributes.position as THREE.BufferAttribute;
     for (let i = 0; i < 60; i++) {
         secondTexts[i].getWorldPosition(tempVector);
         direction.subVectors(tempVector, groupCenter);
         splinePoint.copy(groupCenter).addScaledVector(direction, PARAMS.splineRadiusFactor);
-        secPositions.setXYZ(i, splinePoint.x, splinePoint.y, splinePoint.z);
+        secSplinePoints.push(splinePoint.clone()); // Store a clone
     }
-    // Close the loop
-    secondTexts[0].getWorldPosition(tempVector);
-    direction.subVectors(tempVector, groupCenter);
-    splinePoint.copy(groupCenter).addScaledVector(direction, PARAMS.splineRadiusFactor);
-    secPositions.setXYZ(60, splinePoint.x, splinePoint.y, splinePoint.z);
-    secPositions.needsUpdate = true;
+    // Generate Curve and Update Geometry
+    if (secSplinePoints.length > 1) {
+        const curve = new THREE.CatmullRomCurve3(secSplinePoints, true, 'catmullrom', 0.5);
+        const points = curve.getPoints(curveSegments);
+        const positions = splineGeomSeconds.attributes.position as THREE.BufferAttribute;
+        for (let i = 0; i <= curveSegments; i++) {
+            positions.setXYZ(i, points[i].x, points[i].y, points[i].z);
+        }
+        positions.needsUpdate = true;
+    }
 
-    // Update Minutes Spline
+    // Update Minutes - Collect Points
     minutesGroup.getWorldPosition(groupCenter);
-    const minPositions = splineGeomMinutes.attributes.position as THREE.BufferAttribute;
     for (let i = 0; i < 60; i++) {
         minuteTexts[i].getWorldPosition(tempVector);
         direction.subVectors(tempVector, groupCenter);
         splinePoint.copy(groupCenter).addScaledVector(direction, PARAMS.splineRadiusFactor);
-        minPositions.setXYZ(i, splinePoint.x, splinePoint.y, splinePoint.z);
+        minSplinePoints.push(splinePoint.clone());
     }
-    // Close the loop
-    minuteTexts[0].getWorldPosition(tempVector);
-    direction.subVectors(tempVector, groupCenter);
-    splinePoint.copy(groupCenter).addScaledVector(direction, PARAMS.splineRadiusFactor);
-    minPositions.setXYZ(60, splinePoint.x, splinePoint.y, splinePoint.z);
-    minPositions.needsUpdate = true;
+    // Generate Curve and Update Geometry
+    if (minSplinePoints.length > 1) {
+        const curve = new THREE.CatmullRomCurve3(minSplinePoints, true, 'catmullrom', 0.5);
+        const points = curve.getPoints(curveSegments);
+        const positions = splineGeomMinutes.attributes.position as THREE.BufferAttribute;
+        for (let i = 0; i <= curveSegments; i++) {
+            positions.setXYZ(i, points[i].x, points[i].y, points[i].z);
+        }
+        positions.needsUpdate = true;
+    }
 
-    // Update Hours Spline
+    // Update Hours - Collect Points
     hoursGroup.getWorldPosition(groupCenter);
-    const hrsPositions = splineGeomHours.attributes.position as THREE.BufferAttribute;
-    for (let i = 0; i < 24; i++) { // Loop to 24
+    for (let i = 0; i < 24; i++) {
         hourTexts[i].getWorldPosition(tempVector);
         direction.subVectors(tempVector, groupCenter);
         splinePoint.copy(groupCenter).addScaledVector(direction, PARAMS.splineRadiusFactor);
-        hrsPositions.setXYZ(i, splinePoint.x, splinePoint.y, splinePoint.z);
+        hrsSplinePoints.push(splinePoint.clone());
     }
-    // Close the loop
-    hourTexts[0].getWorldPosition(tempVector);
-    direction.subVectors(tempVector, groupCenter);
-    splinePoint.copy(groupCenter).addScaledVector(direction, PARAMS.splineRadiusFactor);
-    hrsPositions.setXYZ(24, splinePoint.x, splinePoint.y, splinePoint.z); // Close at index 24
-    hrsPositions.needsUpdate = true;
+    // Generate Curve and Update Geometry
+    if (hrsSplinePoints.length > 1) {
+        const curve = new THREE.CatmullRomCurve3(hrsSplinePoints, true, 'catmullrom', 0.5);
+        const points = curve.getPoints(curveSegments);
+        const positions = splineGeomHours.attributes.position as THREE.BufferAttribute;
+        for (let i = 0; i <= curveSegments; i++) {
+            positions.setXYZ(i, points[i].x, points[i].y, points[i].z);
+        }
+        positions.needsUpdate = true;
+    }
 
     // Render
     renderer.render(scene, camera);
